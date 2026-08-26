@@ -1,9 +1,10 @@
-import { PrismaClient, UserRole } from "@prisma/client";
+import { CustomerType, Prisma, PrismaClient, UserRole } from "@prisma/client";
 import bcrypt from "bcryptjs";
 
 /**
- * Seeds the bootstrap tenant for Milestone 1: one organization plus one account
- * per application role (Sections 4.1, 5.1).
+ * Seeds the bootstrap tenant: one organization, one account per application role
+ * (Sections 4.1, 5.1) and a starter customer and product catalogue (Sections
+ * 6.1, 7.1, 8.1).
  *
  * The script is idempotent — it upserts on natural keys so it can be re-run
  * against an existing database without duplicating or resetting records.
@@ -39,6 +40,159 @@ function requirePassword(): string {
     throw new Error("SEED_OWNER_PASSWORD must be at least 8 characters.");
   }
   return OWNER_PASSWORD;
+}
+
+const CATEGORIES: { name: string; description: string }[] = [
+  { name: "Shirts", description: "Short and long sleeve uniform shirts." },
+  { name: "Trousers", description: "Boys and men's uniform trousers." },
+  { name: "Skirts & Pinafores", description: "Girls uniform skirts and pinafores." },
+  { name: "Sportswear", description: "House wear, jerseys and tracksuits." },
+];
+
+const PRODUCTS: {
+  name: string;
+  sku: string;
+  category: string;
+  unit: string;
+  sellingPrice: string;
+  description: string;
+}[] = [
+  {
+    name: "Boys shirt — short sleeve",
+    sku: "SHIRT-SS-BOY",
+    category: "Shirts",
+    unit: "piece",
+    sellingPrice: "4500.00",
+    description: "White poplin short sleeve shirt with school crest.",
+  },
+  {
+    name: "Boys trousers",
+    sku: "TROUSER-BOY",
+    category: "Trousers",
+    unit: "piece",
+    sellingPrice: "6500.00",
+    description: "Grey gabardine trousers.",
+  },
+  {
+    name: "Girls pinafore",
+    sku: "PINAFORE-GIRL",
+    category: "Skirts & Pinafores",
+    unit: "piece",
+    sellingPrice: "7000.00",
+    description: "Checked pinafore with adjustable waist.",
+  },
+  {
+    name: "House wear set",
+    sku: "SPORT-HOUSE-SET",
+    category: "Sportswear",
+    unit: "set",
+    sellingPrice: "9000.00",
+    description: "Jersey and shorts in house colours.",
+  },
+];
+
+const CUSTOMERS: {
+  name: string;
+  customerType: CustomerType;
+  phone: string;
+  email: string;
+  address: string;
+  contactPerson: string;
+  contacts: { name: string; phone: string; position: string; isPrimary: boolean }[];
+}[] = [
+  {
+    name: "Bright Future International School",
+    customerType: CustomerType.SCHOOL,
+    phone: "+2348030000001",
+    email: "admin@brightfuture.local",
+    address: "12 Awolowo Road, Ikoyi, Lagos",
+    contactPerson: "Mrs Adeyemi",
+    contacts: [
+      { name: "Mrs Adeyemi", phone: "+2348030000001", position: "Bursar", isPrimary: true },
+      { name: "Mr Okoro", phone: "+2348030000002", position: "Store keeper", isPrimary: false },
+    ],
+  },
+  {
+    name: "Crestwood Academy",
+    customerType: CustomerType.SCHOOL,
+    phone: "+2348030000003",
+    email: "office@crestwood.local",
+    address: "5 Ikorodu Road, Yaba, Lagos",
+    contactPerson: "Mr Balogun",
+    contacts: [{ name: "Mr Balogun", phone: "+2348030000003", position: "Registrar", isPrimary: true }],
+  },
+  {
+    name: "Harmony Logistics Ltd",
+    customerType: CustomerType.COMPANY,
+    phone: "+2348030000004",
+    email: "hr@harmonylogistics.local",
+    address: "Plot 9 Oshodi Expressway, Lagos",
+    contactPerson: "Ngozi Eze",
+    contacts: [{ name: "Ngozi Eze", phone: "+2348030000004", position: "HR lead", isPrimary: true }],
+  },
+];
+
+/** Starter catalogue and customers so the modules are reviewable after seeding. */
+async function seedCatalogue(organizationId: string) {
+  const categoryIds = new Map<string, string>();
+
+  for (const category of CATEGORIES) {
+    const record = await prisma.productCategory.upsert({
+      where: { organizationId_name: { organizationId, name: category.name } },
+      update: { description: category.description },
+      create: { ...category, organizationId },
+      select: { id: true },
+    });
+    categoryIds.set(category.name, record.id);
+  }
+
+  for (const product of PRODUCTS) {
+    const { category, sellingPrice, ...rest } = product;
+    const data = {
+      ...rest,
+      sellingPrice: new Prisma.Decimal(sellingPrice),
+      categoryId: categoryIds.get(category) ?? null,
+    };
+
+    await prisma.product.upsert({
+      where: { organizationId_name: { organizationId, name: product.name } },
+      update: data,
+      create: { ...data, organizationId },
+    });
+  }
+
+  for (const customer of CUSTOMERS) {
+    const { contacts, ...rest } = customer;
+
+    const record = await prisma.customer.upsert({
+      where: { organizationId_name: { organizationId, name: customer.name } },
+      update: rest,
+      create: { ...rest, organizationId },
+      select: { id: true },
+    });
+
+    for (const contact of contacts) {
+      const existing = await prisma.customerContact.findFirst({
+        where: { organizationId, customerId: record.id, name: contact.name },
+        select: { id: true },
+      });
+
+      if (existing) {
+        await prisma.customerContact.update({ where: { id: existing.id }, data: contact });
+        continue;
+      }
+
+      await prisma.customerContact.create({
+        data: { ...contact, customerId: record.id, organizationId },
+      });
+    }
+  }
+
+  return {
+    categories: await prisma.productCategory.count({ where: { organizationId } }),
+    products: await prisma.product.count({ where: { organizationId } }),
+    customers: await prisma.customer.count({ where: { organizationId } }),
+  };
 }
 
 async function main() {
@@ -87,10 +241,15 @@ async function main() {
     _count: { _all: true },
   });
 
+  const catalogue = await seedCatalogue(organization.id);
+
   console.log(`Seeded organization "${organization.name}" (${organization.id})`);
   for (const row of summary) {
     console.log(`  ${row.role.padEnd(11)} ${row._count._all}`);
   }
+  console.log(
+    `  customers ${catalogue.customers} · categories ${catalogue.categories} · products ${catalogue.products}`,
+  );
   console.log(`Sign in as ${OWNER_EMAIL} using SEED_OWNER_PASSWORD from your .env file.`);
 }
 
