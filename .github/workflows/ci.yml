@@ -1,0 +1,64 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_PASSWORD: postgres
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    env:
+      DATABASE_URL: postgresql://postgres:postgres@localhost:5432/postgres
+      DIRECT_URL: postgresql://postgres:postgres@localhost:5432/postgres
+      AUTH_SECRET: ci-only-secret-value-that-is-long-enough-to-pass
+      SEED_OWNER_PASSWORD: ci-only-password
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+
+      - run: npm ci
+
+      - name: Validate Prisma schema
+        run: npm run db:validate
+
+      - name: Apply migrations
+        run: npm run db:deploy
+
+      - name: Fail if migrations drift from schema.prisma
+        run: >-
+          npx prisma migrate diff
+          --from-url "$DATABASE_URL"
+          --to-schema-datamodel prisma/schema.prisma
+          --exit-code
+
+      - name: Seed
+        run: npm run db:seed
+
+      - run: npm run typecheck
+
+      - run: npm run lint
+
+      - run: npm run build

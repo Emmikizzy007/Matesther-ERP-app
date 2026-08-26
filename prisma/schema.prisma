@@ -1,0 +1,90 @@
+// Matesther Uniform Manufacturing ERP
+// Milestone 1 — Foundation: Organizations, Users, Roles.
+//
+// Architecture rules enforced here (see Architecture Specification):
+//   * UUID primary keys (Section 2.1)
+//   * createdAt / updatedAt timestamps on every mutable table (Section 2.1)
+//   * snake_case physical column/table names via @map / @@map (Section 4)
+//   * every tenant-owned table carries organization_id (Sections 53, 54)
+//   * soft deactivation through is_active rather than hard deletes (Section 57)
+//
+// Later milestones extend this file following the section order documented in
+// Section 64 (enums, Organization, User, Customer, ... AuditLog).
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  // Runtime connection: Supabase transaction pooler (pgbouncer, port 6543).
+  url       = env("DATABASE_URL")
+  // Migrations and introspection need a session-mode connection (port 5432).
+  directUrl = env("DIRECT_URL")
+}
+
+// ---------------------------------------------------------------------------
+// Enums
+// ---------------------------------------------------------------------------
+
+/// Application roles (Section 5.1). Workers are production personnel and are
+/// modelled separately from users — a worker may exist without a login.
+enum UserRole {
+  OWNER
+  ADMIN
+  MANAGER
+  SUPERVISOR
+  ACCOUNTANT
+  STAFF
+  VIEWER
+}
+
+// ---------------------------------------------------------------------------
+// Organization (Section 4.1)
+// ---------------------------------------------------------------------------
+
+model Organization {
+  id           String   @id @default(uuid()) @db.Uuid
+  name         String   @db.VarChar(150)
+  businessName String   @map("business_name") @db.VarChar(150)
+  slug         String   @unique @db.VarChar(80)
+  phone        String?  @db.VarChar(30)
+  email        String?  @db.VarChar(150)
+  address      String?
+  currency     String   @default("NGN") @db.VarChar(3)
+  timezone     String   @default("Africa/Lagos") @db.VarChar(50)
+  isActive     Boolean  @default(true) @map("is_active")
+  createdAt    DateTime @default(now()) @map("created_at")
+  updatedAt    DateTime @updatedAt @map("updated_at")
+
+  users User[]
+
+  @@index([isActive])
+  @@map("organizations")
+}
+
+// ---------------------------------------------------------------------------
+// User (Sections 5.1, 53)
+// ---------------------------------------------------------------------------
+
+model User {
+  id             String    @id @default(uuid()) @db.Uuid
+  organizationId String    @map("organization_id") @db.Uuid
+  name           String    @db.VarChar(150)
+  email          String    @unique @db.VarChar(255)
+  passwordHash   String    @map("password_hash")
+  role           UserRole  @default(STAFF)
+  phone          String?   @db.VarChar(30)
+  avatarUrl      String?   @map("avatar_url")
+  isActive       Boolean   @default(true) @map("is_active")
+  lastLoginAt    DateTime? @map("last_login_at")
+  createdAt      DateTime  @default(now()) @map("created_at")
+  updatedAt      DateTime  @updatedAt @map("updated_at")
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Restrict)
+
+  @@index([organizationId])
+  @@index([organizationId, role])
+  @@index([email])
+  @@map("users")
+}
