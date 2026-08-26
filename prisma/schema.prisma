@@ -1,5 +1,6 @@
 // Matesther Uniform Manufacturing ERP
 // Milestone 1 — Foundation: Organizations, Users, Roles.
+// Milestone 2 — Customers, Customer Contacts, Products, Product Categories.
 //
 // Architecture rules enforced here (see Architecture Specification):
 //   * UUID primary keys (Section 2.1)
@@ -16,7 +17,7 @@ generator client {
 }
 
 datasource db {
-  provider = "postgresql"
+  provider  = "postgresql"
   // Runtime connection: Supabase transaction pooler (pgbouncer, port 6543).
   url       = env("DATABASE_URL")
   // Migrations and introspection need a session-mode connection (port 5432).
@@ -39,6 +40,16 @@ enum UserRole {
   VIEWER
 }
 
+/// Customer classification (Section 6.1). Schools are the dominant case for a
+/// uniform manufacturer, but companies and individuals order too.
+enum CustomerType {
+  SCHOOL
+  COMPANY
+  ORGANIZATION
+  INDIVIDUAL
+  OTHER
+}
+
 // ---------------------------------------------------------------------------
 // Organization (Section 4.1)
 // ---------------------------------------------------------------------------
@@ -57,7 +68,11 @@ model Organization {
   createdAt    DateTime @default(now()) @map("created_at")
   updatedAt    DateTime @updatedAt @map("updated_at")
 
-  users User[]
+  users             User[]
+  customers         Customer[]
+  customerContacts  CustomerContact[]
+  products          Product[]
+  productCategories ProductCategory[]
 
   @@index([isActive])
   @@map("organizations")
@@ -87,4 +102,111 @@ model User {
   @@index([organizationId, role])
   @@index([email])
   @@map("users")
+}
+
+// ---------------------------------------------------------------------------
+// Customer (Section 6.1)
+// ---------------------------------------------------------------------------
+
+model Customer {
+  id             String       @id @default(uuid()) @db.Uuid
+  organizationId String       @map("organization_id") @db.Uuid
+  customerType   CustomerType @default(SCHOOL) @map("customer_type")
+  name           String       @db.VarChar(200)
+  phone          String?      @db.VarChar(30)
+  email          String?      @db.VarChar(150)
+  address        String?
+  contactPerson  String?      @map("contact_person") @db.VarChar(150)
+  notes          String?
+  isActive       Boolean      @default(true) @map("is_active")
+  createdAt      DateTime     @default(now()) @map("created_at")
+  updatedAt      DateTime     @updatedAt @map("updated_at")
+
+  organization Organization      @relation(fields: [organizationId], references: [id], onDelete: Restrict)
+  contacts     CustomerContact[]
+
+  // Customer names are unique per tenant, not globally: two organizations may
+  // both serve a school of the same name.
+  @@unique([organizationId, name])
+  @@index([organizationId, isActive])
+  @@index([organizationId, customerType])
+  @@map("customers")
+}
+
+// ---------------------------------------------------------------------------
+// CustomerContact (Section 7.1)
+// ---------------------------------------------------------------------------
+
+model CustomerContact {
+  id             String   @id @default(uuid()) @db.Uuid
+  // Denormalised from the parent customer so every tenant-owned table can be
+  // filtered by organization_id directly (Section 54).
+  organizationId String   @map("organization_id") @db.Uuid
+  customerId     String   @map("customer_id") @db.Uuid
+  name           String   @db.VarChar(150)
+  phone          String   @db.VarChar(30)
+  email          String?  @db.VarChar(150)
+  position       String?  @db.VarChar(100)
+  isPrimary      Boolean  @default(false) @map("is_primary")
+  createdAt      DateTime @default(now()) @map("created_at")
+  updatedAt      DateTime @updatedAt @map("updated_at")
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Restrict)
+  // Contacts are part of the customer aggregate and have no history worth
+  // keeping on their own, so they cascade.
+  customer     Customer     @relation(fields: [customerId], references: [id], onDelete: Cascade)
+
+  @@index([organizationId])
+  @@index([customerId])
+  @@map("customer_contacts")
+}
+
+// ---------------------------------------------------------------------------
+// ProductCategory (Section 9.1)
+// ---------------------------------------------------------------------------
+
+model ProductCategory {
+  id             String   @id @default(uuid()) @db.Uuid
+  organizationId String   @map("organization_id") @db.Uuid
+  name           String   @db.VarChar(100)
+  description    String?
+  createdAt      DateTime @default(now()) @map("created_at")
+  updatedAt      DateTime @updatedAt @map("updated_at")
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Restrict)
+  products     Product[]
+
+  @@unique([organizationId, name])
+  @@index([organizationId])
+  @@map("product_categories")
+}
+
+// ---------------------------------------------------------------------------
+// Product (Section 8.1)
+// ---------------------------------------------------------------------------
+
+model Product {
+  id             String   @id @default(uuid()) @db.Uuid
+  organizationId String   @map("organization_id") @db.Uuid
+  categoryId     String?  @map("category_id") @db.Uuid
+  name           String   @db.VarChar(150)
+  sku            String?  @db.VarChar(50)
+  description    String?
+  unit           String   @default("piece") @db.VarChar(30)
+  // Money is Decimal, never a float (Section 2.1, Agent rule 8).
+  sellingPrice   Decimal? @map("selling_price") @db.Decimal(14, 2)
+  isActive       Boolean  @default(true) @map("is_active")
+  createdAt      DateTime @default(now()) @map("created_at")
+  updatedAt      DateTime @updatedAt @map("updated_at")
+
+  organization Organization     @relation(fields: [organizationId], references: [id], onDelete: Restrict)
+  // Deleting a category leaves its products uncategorised rather than removing
+  // catalogue rows that orders will later reference.
+  category     ProductCategory? @relation(fields: [categoryId], references: [id], onDelete: SetNull)
+
+  @@unique([organizationId, name])
+  @@unique([organizationId, sku])
+  @@index([organizationId, isActive])
+  @@index([organizationId, categoryId])
+  @@map("products")
 }

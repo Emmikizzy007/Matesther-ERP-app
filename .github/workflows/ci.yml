@@ -57,6 +57,11 @@ jobs:
       - name: Seed
         run: npm run db:seed
 
+      - name: Tests
+        run: npm test
+        env:
+          RUN_DB_TESTS: "1"
+
       - run: npm run typecheck
 
       - run: npm run lint

@@ -4,7 +4,7 @@ Uniform manufacturing ERP for **Matesther**, built to the *Uniform Manufacturing
 Database Schema, Production Tracking & Next.js Architecture Specification*.
 
 The specification is delivered in milestones (Section 65). This repository currently
-contains **Milestone 1 — Foundation**.
+contains **Milestone 1 — Foundation** and **Milestone 2 — Customers & Products**.
 
 ## Stack
 
@@ -29,6 +29,18 @@ contains **Milestone 1 — Foundation**.
 - Login page, session middleware, and a dashboard shell with a responsive sidebar
   covering the full route tree from Section 43.
 - Prisma migration and an idempotent seed script.
+
+## Milestone 2 — what is delivered
+
+- Customers with contacts, and products with categories — all organization-scoped.
+- Full CRUD: create, edit, deactivate/reactivate (master data is never deleted,
+  Section 57), plus add/edit/remove of customer contacts with a single primary contact.
+- Server-rendered lists with search, filters (type / category / status) and pagination;
+  filter state lives in the URL so lists are shareable and bookmarkable.
+- Every mutation is a server action guarded by `customer:write` / `product:write` and
+  validated with Zod; every read and write is filtered by the session's organization.
+- Selling prices are Prisma `Decimal` end to end and are formatted from strings, so no
+  amount ever passes through a JavaScript float.
 
 Modules for later milestones exist as routes with a placeholder that names the milestone
 that delivers them, so navigation is complete without pre-building the ERP (Agent rules
@@ -64,6 +76,7 @@ port 5432 for `DIRECT_URL`, with the `postgres.<project-ref>` username.
 | `npm run dev` | Development server |
 | `npm run build` | `prisma generate` then a production build |
 | `npm run typecheck` | `tsc --noEmit` |
+| `npm test` | Vitest unit tests (set `RUN_DB_TESTS=1` to include the database tests) |
 | `npm run lint` | ESLint |
 | `npm run db:migrate` | Create and apply a migration in development |
 | `npm run db:deploy` | Apply pending migrations (CI / production) |
@@ -87,7 +100,9 @@ src/
     ui/                  # shadcn/ui primitives
   features/              # per-domain actions / queries / schemas
     auth/
+    customers/
     dashboard/
+    products/
   lib/
     auth/                # session cookie, password hashing, request guards
     constants/           # roles, navigation
@@ -114,7 +129,7 @@ Business logic lives in `src/features/<domain>` and `src/lib`, never in page com
 | Milestone | Scope |
 | --- | --- |
 | 1 | Foundation — auth, organizations, users, roles, dashboard shell ✅ |
-| 2 | Customers & products |
+| 2 | Customers & products ✅ |
 | 3 | Orders, order items, sizes, payments |
 | 4 | Workers |
 | 5 | Production workflows, batches, operations, state machine |
